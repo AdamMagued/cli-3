@@ -2,6 +2,7 @@ package develop
 
 import (
 	ctx "context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -278,13 +279,47 @@ func developRunCreate(opts *DevelopOptions, apiClient *api.Client, issueRepo ghr
 	// Remember which branch to target when creating a PR.
 	if opts.BaseBranch != "" {
 		if err := opts.GitClient.SetBranchConfig(ctx.Background(), branchName, git.MergeBaseConfig, opts.BaseBranch); err != nil {
-			return err
+			if !opts.Checkout && isNotGitDirError(opts, err) {
+				// The working directory is not a git repository; ignore the error
+				// when checkout is not requested, following the same convention as checkoutBranch.
+			} else {
+				return err
+			}
 		}
 	}
 
 	fmt.Fprintf(opts.IO.Out, "%s/%s/tree/%s\n", branchRepo.RepoHost(), ghrepo.FullName(branchRepo), branchName)
 
 	return checkoutBranch(opts, branchRepo, branchName, worktreeTarget)
+}
+
+func isNotGitDirError(opts *DevelopOptions, configErr error) bool {
+	if configErr == nil {
+		return false
+	}
+	var gitErr *git.GitError
+	if errors.As(configErr, &gitErr) {
+		msg := strings.ToLower(gitErr.Stderr)
+		if strings.Contains(msg, "not in a git directory") || strings.Contains(msg, "not a git repository") {
+			return true
+		}
+		if gitErr.ExitCode == 128 && gitErr.Stderr == "" {
+			return true
+		}
+	}
+	msg := strings.ToLower(configErr.Error())
+	if strings.Contains(msg, "not in a git directory") || strings.Contains(msg, "not a git repository") {
+		return true
+	}
+	if opts.Remotes != nil {
+		if _, err := opts.Remotes(); err != nil {
+			var gitErr *git.GitError
+			if errors.As(configErr, &gitErr) && gitErr.ExitCode == 128 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func findExistingLinkedBranchName(branches []api.LinkedBranch, branchRepo ghrepo.Interface, branchName string) string {

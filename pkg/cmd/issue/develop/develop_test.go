@@ -612,6 +612,81 @@ func TestDevelopRun(t *testing.T) {
 			expectedOut: "github.com/cli/cli/tree/my-issue-1\n",
 		},
 		{
+			name: "develop new branch with base outside of local git repo",
+			opts: &DevelopOptions{
+				IssueNumber: 123,
+				BaseBranch:  "main",
+				BaseRepo: func() (ghrepo.Interface, error) {
+					return ghrepo.New("cli", "cli"), nil
+				},
+			},
+			httpStubs: func(reg *httpmock.Registry, t *testing.T) {
+				reg.Register(
+					httpmock.GraphQL(`query LinkedBranchFeature\b`),
+					httpmock.StringResponse(featureEnabledPayload),
+				)
+				reg.Register(
+					httpmock.GraphQL(`query IssueByNumber\b`),
+					httpmock.StringResponse(`{"data":{"repository":{"hasIssuesEnabled":true,"issue":{"id": "SOMEID","number":123,"title":"my issue"}}}}`),
+				)
+				reg.Register(
+					httpmock.GraphQL(`query FindRepoBranchID\b`),
+					httpmock.StringResponse(`{"data":{"repository":{"id":"REPOID","ref":{"target":{"oid":"OID"}}}}}`),
+				)
+				reg.Register(
+					httpmock.GraphQL(`mutation CreateLinkedBranch\b`),
+					httpmock.GraphQLMutation(`{"data":{"createLinkedBranch":{"linkedBranch":{"id":"2","ref":{"name":"my-issue-1"}}}}}`,
+						func(inputs map[string]any) {
+							assert.Equal(t, "REPOID", inputs["repositoryId"])
+							assert.Equal(t, "SOMEID", inputs["issueId"])
+							assert.Equal(t, "OID", inputs["oid"])
+						}),
+				)
+			},
+			runStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git config branch\.my-issue-1\.gh-merge-base main`, 128, "")
+			},
+			expectedOut: "github.com/cli/cli/tree/my-issue-1\n",
+		},
+		{
+			name: "develop new branch with base and checkout outside of local git repo returns an error",
+			opts: &DevelopOptions{
+				IssueNumber: 123,
+				BaseBranch:  "main",
+				Checkout:    true,
+				BaseRepo: func() (ghrepo.Interface, error) {
+					return ghrepo.New("cli", "cli"), nil
+				},
+			},
+			httpStubs: func(reg *httpmock.Registry, t *testing.T) {
+				reg.Register(
+					httpmock.GraphQL(`query LinkedBranchFeature\b`),
+					httpmock.StringResponse(featureEnabledPayload),
+				)
+				reg.Register(
+					httpmock.GraphQL(`query IssueByNumber\b`),
+					httpmock.StringResponse(`{"data":{"repository":{"hasIssuesEnabled":true,"issue":{"id": "SOMEID","number":123,"title":"my issue"}}}}`),
+				)
+				reg.Register(
+					httpmock.GraphQL(`query FindRepoBranchID\b`),
+					httpmock.StringResponse(`{"data":{"repository":{"id":"REPOID","ref":{"target":{"oid":"OID"}}}}}`),
+				)
+				reg.Register(
+					httpmock.GraphQL(`mutation CreateLinkedBranch\b`),
+					httpmock.GraphQLMutation(`{"data":{"createLinkedBranch":{"linkedBranch":{"id":"2","ref":{"name":"my-issue-1"}}}}}`,
+						func(inputs map[string]any) {
+							assert.Equal(t, "REPOID", inputs["repositoryId"])
+							assert.Equal(t, "SOMEID", inputs["issueId"])
+							assert.Equal(t, "OID", inputs["oid"])
+						}),
+				)
+			},
+			runStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git config branch\.my-issue-1\.gh-merge-base main`, 128, "")
+			},
+			wantErrContains: "failed to run git",
+		},
+		{
 			name: "develop new branch with checkout when local branch exists",
 			opts: &DevelopOptions{
 				Name:        "my-branch",
